@@ -1,0 +1,114 @@
+# Zapp Infra Template - Main Pipeline
+# Calls the zapp-devsecops-framework reusable pipelines in infra mode
+# Replace FRAMEWORK_REF with the specific version/tag you want to pin to
+
+name: Infrastructure Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+      - 'release/**'
+      - 'hotfix/**'
+
+# =============================================
+# CONFIGURE THESE VALUES FOR YOUR PROJECT
+# =============================================
+env:
+  FRAMEWORK_REPO: "Zappsec/zapp-devsecops-framework"
+  FRAMEWORK_REF: "main"              # Pin to a tag/SHA in production e.g. v1.0.0
+  DEPLOYMENT_MODE: "infra"           # infra | ai | app | all
+  TERRAFORM_DIR: "./terraform"
+  HELM_DIR: "./helm"
+  HELM_RELEASE: "my-app"            # Change to your app name
+  HELM_NAMESPACE: "default"         # Change to your namespace
+
+jobs:
+  # =============================================
+  # STEP 1: Security CI
+  # Runs secrets scan, IaC scan (Checkov), branch policy
+  # Blocks on CRITICAL/HIGH findings
+  # =============================================
+  security:
+    name: Security CI
+    uses: Zappsec/zapp-devsecops-framework/.github/workflows/ci-security.yml@main
+    with:
+      deployment-mode: "infra"
+      iac-paths: "./terraform,./helm"
+    secrets: inherit
+
+  # =============================================
+  # STEP 2: Quality & Compliance CI
+  # Runs after security passes
+  # Dependency scan, SBOM, license check, CIS report
+  # =============================================
+  quality:
+    name: Quality & Compliance CI
+    needs: security
+    uses: Zappsec/zapp-devsecops-framework/.github/workflows/ci-quality.yml@main
+    with:
+      deployment-mode: "infra"
+    secrets: inherit
+
+  # =============================================
+  # STEP 3: Deploy to Dev
+  # Auto deploy on merge to main
+  # No approval required
+  # =============================================
+  deploy-dev:
+    name: Deploy to Dev
+    needs: [security, quality]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: Zappsec/zapp-devsecops-framework/.github/workflows/cd-deployment.yml@main
+    with:
+      deployment-mode: "infra"
+      environment: "dev"
+      terraform-dir: "./terraform"
+      helm-chart-dir: "./helm"
+      helm-release-name: "my-app"
+      helm-namespace: "default"
+      terraform-apply: "true"
+    secrets: inherit
+
+  # =============================================
+  # STEP 4: Deploy to Staging
+  # Requires 1 approval (configure in GitHub Environments)
+  # =============================================
+  deploy-staging:
+    name: Deploy to Staging
+    needs: deploy-dev
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: Zappsec/zapp-devsecops-framework/.github/workflows/cd-deployment.yml@main
+    with:
+      deployment-mode: "infra"
+      environment: "staging"
+      terraform-dir: "./terraform"
+      helm-chart-dir: "./helm"
+      helm-release-name: "my-app"
+      helm-namespace: "my-app-staging"
+      terraform-apply: "true"
+    secrets: inherit
+
+  # =============================================
+  # STEP 5: Deploy to Production
+  # Requires 2 approvals (configure in GitHub Environments)
+  # =============================================
+  deploy-prod:
+    name: Deploy to Production
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    uses: Zappsec/zapp-devsecops-framework/.github/workflows/cd-deployment.yml@main
+    with:
+      deployment-mode: "infra"
+      environment: "prod"
+      terraform-dir: "./terraform"
+      helm-chart-dir: "./helm"
+      helm-release-name: "my-app"
+      helm-namespace: "my-app-prod"
+      terraform-apply: "true"
+    secrets: inherit
